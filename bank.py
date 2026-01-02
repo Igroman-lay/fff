@@ -1,18 +1,16 @@
 import os
 import sqlite3
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify, session, send_from_directory
 import random
 import string
 import hashlib
 from datetime import datetime, timedelta
-import logging
+from flask_cors import CORS
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+app = Flask(__name__, static_folder='static', static_url_path='')
+CORS(app)  # Разрешаем запросы от фронтенда
+
 app.secret_key = os.environ.get('SECRET_KEY', 'virtual-bank-secret-2026')
-
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # ========== БАЗА ДАННЫХ ==========
 
@@ -23,9 +21,8 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
+    c = conn.cursor()
+    c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             login TEXT UNIQUE NOT NULL,
@@ -33,24 +30,22 @@ def init_db():
             email TEXT NOT NULL,
             balance REAL DEFAULT 1000.0,
             code TEXT,
-            code_time TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            code_time TEXT
         )
     ''')
-    
     conn.commit()
     conn.close()
-    logger.info("✅ База данных готова")
+    print("✅ База данных готова")
 
 init_db()
 
-def hash_password(pwd):
-    return hashlib.sha256(pwd.encode()).hexdigest()
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def generate_code():
     return ''.join(random.choices(string.digits, k=6))
 
-# ========== API РОУТЫ ==========
+# ========== РОУТЫ ==========
 
 @app.route('/')
 def home():
@@ -59,8 +54,16 @@ def home():
     <body style="font-family: Arial; padding: 20px;">
         <h1>🏦 Виртуальный Банк</h1>
         <p>✅ Сервер работает!</p>
-        <p><a href="/health">Проверить API</a></p>
         <p><a href="/static/index.html">Перейти к банку</a></p>
+        <p><a href="/health">Проверить API</a></p>
+        <p>Доступные endpoints:</p>
+        <ul>
+            <li>POST /register - регистрация</li>
+            <li>POST /login - вход</li>
+            <li>POST /verify_code - проверка кода</li>
+            <li>GET /balance - баланс</li>
+            <li>POST /transfer - перевод</li>
+        </ul>
     </body>
     </html>
     '''
@@ -70,190 +73,157 @@ def health():
     return jsonify({
         'status': 'online',
         'service': 'virtual-bank',
-        'timestamp': datetime.now().isoformat(),
-        'message': '✅ Сервер работает корректно'
+        'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/register', methods=['POST'])
 def register():
     try:
-        data = request.get_json()
-        login = data.get('login', '').strip()
-        password = data.get('password', '').strip()
-        email = data.get('email', '').strip()
-        
-        if len(login) < 3:
-            return jsonify({'success': False, 'error': 'Логин мин. 3 символа'}), 400
+        data = request.json
+        login = data['login'].strip()
+        password = data['password'].strip()
+        email = data['email'].strip()
         
         conn = get_db()
-        cursor = conn.cursor()
+        c = conn.cursor()
         
-        cursor.execute('SELECT id FROM users WHERE login = ?', (login,))
-        if cursor.fetchone():
+        try:
+            c.execute(
+                "INSERT INTO users (login, password, email) VALUES (?, ?, ?)",
+                (login, hash_password(password), email)
+            )
+            conn.commit()
+            return jsonify({'success': True})
+        except sqlite3.IntegrityError:
+            return jsonify({'success': False, 'error': 'Логин занят'})
+        finally:
             conn.close()
-            return jsonify({'success': False, 'error': 'Логин уже занят'}), 400
-        
-        cursor.execute(
-            'INSERT INTO users (login, password, email) VALUES (?, ?, ?)',
-            (login, hash_password(password), email)
-        )
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'success': True, 'message': 'Аккаунт создан!'})
-        
+            
     except Exception as e:
-        return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
     try:
-        data = request.get_json()
-        login = data.get('login', '').strip()
-        password = data.get('password', '').strip()
+        data = request.json
+        login = data['login'].strip()
+        password = data['password'].strip()
         
         conn = get_db()
-        cursor = conn.cursor()
+        c = conn.cursor()
         
-        cursor.execute(
-            'SELECT id, email FROM users WHERE login = ? AND password = ?',
+        c.execute(
+            "SELECT id, email FROM users WHERE login=? AND password=?",
             (login, hash_password(password))
         )
-        user = cursor.fetchone()
+        user = c.fetchone()
         
-        if not user:
+        if user:
+            code = generate_code()
+            c.execute(
+                "UPDATE users SET code=?, code_time=? WHERE id=?",
+                (code, datetime.now().isoformat(), user[0])
+            )
+            conn.commit()
             conn.close()
-            return jsonify({'success': False, 'error': 'Неверный логин или пароль'}), 401
-        
-        user_id, user_email = user
-        code = generate_code()
-        
-        cursor.execute(
-            'UPDATE users SET code = ?, code_time = ? WHERE id = ?',
-            (code, datetime.now().isoformat(), user_id)
-        )
-        conn.commit()
-        conn.close()
-        
-        session['user_id'] = user_id
-        session['await_code'] = True
-        
-        # Показываем код в интерфейсе (без email)
-        return jsonify({
-            'success': True,
-            'await_code': True,
-            'demo_code': code,
-            'message': f'Ваш код: {code} (демо-режим)'
-        })
-        
+            
+            session['user_id'] = user[0]
+            session['await_code'] = True
+            
+            return jsonify({
+                'success': True,
+                'await_code': True,
+                'demo_code': code,
+                'message': f'Код для входа: {code}'
+            })
+        else:
+            conn.close()
+            return jsonify({'success': False, 'error': 'Неверный логин/пароль'})
+            
     except Exception as e:
-        return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/verify_code', methods=['POST'])
 def verify_code():
     try:
-        data = request.get_json()
-        code = data.get('code', '').strip()
-        user_id = session.get('user_id')
+        data = request.json
+        code = data['code'].strip()
         
+        user_id = session.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'error': 'Сессия истекла'}), 401
         
         conn = get_db()
-        cursor = conn.cursor()
+        c = conn.cursor()
         
         time_limit = (datetime.now() - timedelta(minutes=5)).isoformat()
-        cursor.execute(
-            'SELECT id FROM users WHERE id = ? AND code = ? AND code_time > ?',
+        c.execute(
+            "SELECT id FROM users WHERE id=? AND code=? AND code_time > ?",
             (user_id, code, time_limit)
         )
         
-        if cursor.fetchone():
-            cursor.execute('UPDATE users SET code = NULL, code_time = NULL WHERE id = ?', (user_id,))
-            conn.commit()
-            conn.close()
-            
+        if c.fetchone():
             session['logged_in'] = True
             session.pop('await_code', None)
-            
-            return jsonify({'success': True, 'message': '✅ Вход выполнен!'})
+            return jsonify({'success': True})
         else:
-            conn.close()
-            return jsonify({'success': False, 'error': 'Неверный код'}), 401
+            return jsonify({'success': False, 'error': 'Неверный код'})
             
     except Exception as e:
-        return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/balance', methods=['GET'])
-def get_balance():
-    try:
-        if not session.get('logged_in'):
-            return jsonify({'error': 'Требуется авторизация'}), 401
-        
-        user_id = session['user_id']
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT balance FROM users WHERE id = ?', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            return jsonify({'success': True, 'balance': float(result[0])})
-        else:
-            return jsonify({'error': 'Пользователь не найден'}), 404
-            
-    except Exception as e:
-        return jsonify({'error': 'Ошибка сервера'}), 500
+def balance():
+    if not session.get('logged_in'):
+        return jsonify({'error': 'Авторизуйтесь'}), 401
+    
+    user_id = session.get('user_id')
+    conn = get_db()
+    c = conn.cursor()
+    
+    c.execute("SELECT balance FROM users WHERE id=?", (user_id,))
+    bal = c.fetchone()[0]
+    conn.close()
+    
+    return jsonify({'balance': bal})
 
 @app.route('/transfer', methods=['POST'])
 def transfer():
-    try:
-        if not session.get('logged_in'):
-            return jsonify({'error': 'Требуется авторизация'}), 401
-        
-        data = request.get_json()
-        to_login = data['to_login'].strip()
-        amount = float(data['amount'])
-        
-        user_id = session['user_id']
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT balance FROM users WHERE id = ?', (user_id,))
-        sender = cursor.fetchone()
-        
-        if not sender or float(sender[0]) < amount:
-            conn.close()
-            return jsonify({'success': False, 'error': 'Недостаточно средств'}), 400
-        
-        cursor.execute('SELECT id FROM users WHERE login = ?', (to_login,))
-        receiver = cursor.fetchone()
-        
-        if not receiver:
-            conn.close()
-            return jsonify({'success': False, 'error': 'Получатель не найден'}), 404
-        
-        receiver_id = receiver[0]
-        
-        cursor.execute('UPDATE users SET balance = balance - ? WHERE id = ?', (amount, user_id))
-        cursor.execute('UPDATE users SET balance = balance + ? WHERE id = ?', (amount, receiver_id))
-        
-        conn.commit()
+    if not session.get('logged_in'):
+        return jsonify({'error': 'Авторизуйтесь'}), 401
+    
+    data = request.json
+    amount = float(data['amount'])
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Отправитель
+    c.execute("SELECT id, balance FROM users WHERE id=?", (session['user_id'],))
+    sender = c.fetchone()
+    
+    # Получатель
+    c.execute("SELECT id FROM users WHERE login=?", (data['to_login'],))
+    receiver = c.fetchone()
+    
+    if not receiver or sender[1] < amount:
         conn.close()
-        
-        return jsonify({'success': True, 'message': f'✅ Перевод {amount}₽ выполнен!'})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
+        return jsonify({'success': False, 'error': 'Ошибка перевода'})
+    
+    c.execute("UPDATE users SET balance = balance - ? WHERE id=?", (amount, sender[0]))
+    c.execute("UPDATE users SET balance = balance + ? WHERE id=?", (amount, receiver[0]))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
 
 @app.route('/logout', methods=['GET'])
 def logout():
     session.clear()
-    return jsonify({'success': True, 'message': 'Выход выполнен'})
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    logger.info(f"🚀 Сервер запущен на порту {port}")
+    print(f"🚀 Сервер запущен: http://localhost:{port}")
+    print(f"📱 Фронтенд: http://localhost:{port}/static/index.html")
     app.run(host='0.0.0.0', port=port, debug=False)

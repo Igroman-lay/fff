@@ -276,9 +276,7 @@
     </div>
 
     <script>
-        const API_BASE = window.location.hostname.includes('localhost') 
-    	? 'http://localhost:10000/' 
-    	: 'https://ваш-проект.onrender.com/';
+        const API_BASE = window.location.origin + '/';
 
         // Инициализация - проверяем соединение при загрузке
         document.addEventListener('DOMContentLoaded', async () => {
