@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: virtual-bank
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn bank:app
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bankdb
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: EMAIL_ADDRESS
+        value: genaklimov2005@gmail.com
+      - key: EMAIL_PASSWORD
+        sync: false  # Установите вручную в Dashboard
