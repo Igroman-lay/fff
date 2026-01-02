@@ -5,7 +5,49 @@ import random
 import string
 import hashlib
 from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
+# Настройки email (замени на свои или оставь пустым для демо)
+GMAIL_USER = "genaklimov2005@gmail.com"
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_PASSWORD', '')  # Пароль приложения
+
+def send_email_code(to_email, code):
+    """Отправляет код на email"""
+    if not GMAIL_APP_PASSWORD:
+        print(f"📧 Демо-режим: код для {to_email} - {code}")
+        return False  # В демо-режиме не отправляем
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = to_email
+        msg['Subject'] = '🏦 Код подтверждения Виртуального Банка'
+        
+        html = f"""
+        <html>
+        <body>
+            <h2>🏦 Виртуальный Банк</h2>
+            <p>Ваш код подтверждения: <strong>{code}</strong></p>
+            <p>Код действителен 5 минут.</p>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(html, 'html'))
+        
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.send_message(msg)
+        
+        print(f"✅ Email отправлен на {to_email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Ошибка отправки email: {e}")
+        return False
 app = Flask(__name__, static_folder='static', static_url_path='')
 app.secret_key = os.environ.get('SECRET_KEY', 'virtual-bank-secret-2026')
 
@@ -54,16 +96,23 @@ def generate_code():
 
 @app.route('/')
 def home():
-    return '''
-    <html>
-    <body style="font-family: Arial; padding: 20px;">
-        <h1>🏦 Виртуальный Банк</h1>
-        <p>✅ Сервер работает!</p>
-        <p><a href="/static/index.html">Перейти к банку</a></p>
-        <p><a href="/health">Проверить API</a></p>
-    </body>
-    </html>
-    '''
+    """Перенаправляем сразу на страницу банка"""
+    try:
+        # Пробуем отдать index.html как главную страницу
+        return app.send_static_file('index.html')
+    except:
+        # Если файл не найден, показываем простую страницу
+        return '''
+        <html>
+        <head>
+            <meta http-equiv="refresh" content="0; url=/static/index.html">
+        </head>
+        <body>
+            <p>Перенаправление на банк...</p>
+            <script>window.location.href = "/static/index.html";</script>
+        </body>
+        </html>
+        '''
 
 @app.route('/health')
 def health():
