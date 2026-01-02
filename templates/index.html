@@ -1,0 +1,297 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏦 Виртуальный Банк</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏦 Виртуальный Банк</h1>
+            <p>Виртуальные деньги • Переводы • 2FA по email</p>
+        </header>
+
+        <!-- Форма регистрации -->
+        <div id="register-form" class="form-panel">
+            <h2>📝 Регистрация</h2>
+            <input id="reg-login" placeholder="Логин" maxlength="20">
+            <input id="reg-password" type="password" placeholder="Пароль">
+            <input id="reg-email" type="email" placeholder="Email" value="genaklimov2005@gmail.com">
+            <button onclick="register()">Создать аккаунт</button>
+            <div style="margin-top: 15px; text-align: center;">
+                <button onclick="switchToLogin()" style="background: #6c757d;">Войти в аккаунт</button>
+            </div>
+        </div>
+
+        <!-- Форма входа -->
+        <div id="login-form" class="form-panel">
+            <h2>🔐 Вход</h2>
+            <input id="login-login" placeholder="Логин">
+            <input id="login-password" type="password" placeholder="Пароль">
+            <button onclick="login()">Войти</button>
+            <div style="margin-top: 15px; text-align: center;">
+                <button onclick="switchToRegister()" style="background: #6c757d;">Назад к регистрации</button>
+            </div>
+        </div>
+
+        <!-- Форма подтверждения кода -->
+        <div id="code-form" class="form-panel">
+            <h2>📧 Код из письма</h2>
+            <input id="code" placeholder="Введите 6 цифр" maxlength="6">
+            <button onclick="verifyCode()">Подтвердить</button>
+            <p class="hint">Проверьте почту (и спам)!</p>
+        </div>
+
+        <!-- Основной интерфейс банка -->
+        <div id="bank-panel" class="bank-panel">
+            <div class="balance-card">
+                <h2>💰 Баланс</h2>
+                <div id="balance" class="balance">0 ₽</div>
+                <button onclick="refreshBalance()" class="btn-small">Обновить</button>
+            </div>
+
+            <div class="transfer-form">
+                <h3>💸 Перевод</h3>
+                <input id="to-login" placeholder="Логин получателя">
+                <input id="amount" type="number" placeholder="Сумма" min="0.01" step="0.01">
+                <button onclick="transfer()">Перевести</button>
+            </div>
+
+            <div class="actions">
+                <button onclick="logout()" class="btn-danger">Выход</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/';
+
+        // Инициализация - показываем только форму регистрации при загрузке
+        document.addEventListener('DOMContentLoaded', () => {
+        hideAllPanels();
+        document.getElementById('register-form').style.display = 'block';
+        });
+
+        // Функции переключения между формами
+        function switchToLogin() {
+        hideAllPanels();
+        document.getElementById('login-form').style.display = 'block';
+        }
+
+        function switchToRegister() {
+        hideAllPanels();
+        document.getElementById('register-form').style.display = 'block';
+        }
+
+        function hideAllPanels() {
+        // Скрываем все панели
+        document.getElementById('register-form').style.display = 'none';
+        document.getElementById('login-form').style.display = 'none';
+        document.getElementById('code-form').style.display = 'none';
+        document.getElementById('bank-panel').style.display = 'none';
+        }
+
+        // Функция для проверки заполненности полей
+        function validateFields(fields) {
+        for (const [fieldId, fieldName] of fields) {
+        const field = document.getElementById(fieldId);
+        if (!field || !field.value.trim()) {
+        alert(`❌ Пожалуйста, заполните поле: ${fieldName}`);
+        if (field) field.focus();
+        return false;
+        }
+        }
+        return true;
+        }
+
+        // API функции
+        async function apiPost(endpoint, data) {
+        const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+        });
+        return res.json();
+        }
+
+        // Регистрация
+        async function register() {
+        // Проверка заполненности полей
+        const fields = [
+        ['reg-login', 'Логин'],
+        ['reg-password', 'Пароль'],
+        ['reg-email', 'Email']
+        ];
+
+        if (!validateFields(fields)) return;
+
+        const data = {
+        login: document.getElementById('reg-login').value.trim(),
+        password: document.getElementById('reg-password').value.trim(),
+        email: document.getElementById('reg-email').value.trim()
+        };
+
+        showLoading();
+        try {
+        const json = await apiPost('/register', data);
+        if (json.success) {
+        alert('✅ Аккаунт создан! Теперь войдите.');
+        switchToLogin();
+        } else {
+        alert('❌ ' + (json.error || 'Ошибка регистрации'));
+        }
+        } catch (error) {
+        alert('❌ Ошибка соединения с сервером');
+        } finally {
+        hideLoading();
+        }
+        }
+
+        // Вход
+        async function login() {
+        // Проверка заполненности полей
+        const fields = [
+        ['login-login', 'Логин'],
+        ['login-password', 'Пароль']
+        ];
+
+        if (!validateFields(fields)) return;
+
+        const data = {
+        login: document.getElementById('login-login').value.trim(),
+        password: document.getElementById('login-password').value.trim()
+        };
+
+        showLoading();
+        try {
+        const json = await apiPost('/login', data);
+        if (json.success) {
+        if (json.await_code) {
+        hideAllPanels();
+        document.getElementById('code-form').style.display = 'block';
+        alert('✅ Код отправлен на ваш email!');
+        } else {
+        // Если не требуется код, сразу в банк
+        hideAllPanels();
+        document.getElementById('bank-panel').style.display = 'block';
+        refreshBalance();
+        }
+        } else {
+        alert('❌ ' + (json.error || 'Неверный логин или пароль'));
+        }
+        } catch (error) {
+        alert('❌ Ошибка соединения с сервером');
+        } finally {
+        hideLoading();
+        }
+        }
+
+        // Подтверждение кода
+        async function verifyCode() {
+        const code = document.getElementById('code').value.trim();
+        if (!code || code.length !== 6) {
+        alert('❌ Введите 6-значный код');
+        document.getElementById('code').focus();
+        return;
+        }
+
+        showLoading();
+        try {
+        const json = await apiPost('/verify_code', { code: code });
+        if (json.success) {
+        hideAllPanels();
+        document.getElementById('bank-panel').style.display = 'block';
+        refreshBalance();
+        alert('✅ Авторизация успешна!');
+        } else {
+        alert('❌ ' + (json.error || 'Неверный или просроченный код'));
+        }
+        } catch (error) {
+        alert('❌ Ошибка соединения с сервером');
+        } finally {
+        hideLoading();
+        }
+        }
+
+        // Обновление баланса
+        async function refreshBalance() {
+        try {
+        const res = await fetch('/balance');
+        if (res.ok) {
+        const json = await res.json();
+        if (json.balance !== undefined) {
+        document.getElementById('balance').textContent = json.balance.toFixed(2) + ' ₽';
+        } else if (json.error) {
+        alert('❌ ' + json.error);
+        logout();
+        }
+        } else if (res.status === 401) {
+        alert('❌ Сессия истекла. Войдите снова.');
+        logout();
+        }
+        } catch (error) {
+        console.error('Ошибка при обновлении баланса:', error);
+        }
+        }
+
+        // Перевод денег
+        async function transfer() {
+        const fields = [
+        ['to-login', 'Логин получателя'],
+        ['amount', 'Сумма']
+        ];
+
+        if (!validateFields(fields)) return;
+
+        const amount = parseFloat(document.getElementById('amount').value);
+        if (amount <= 0) {
+        alert('❌ Сумма должна быть больше 0');
+        return;
+        }
+
+        const data = {
+        to_login: document.getElementById('to-login').value.trim(),
+        amount: amount
+        };
+
+        showLoading();
+        try {
+        const json = await apiPost('/transfer', data);
+        if (json.success) {
+        alert('✅ Перевод успешно выполнен!');
+        document.getElementById('to-login').value = '';
+        document.getElementById('amount').value = '';
+        refreshBalance();
+        } else {
+        alert('❌ ' + (json.error || 'Ошибка перевода'));
+        }
+        } catch (error) {
+        alert('❌ Ошибка соединения с сервером');
+        } finally {
+        hideLoading();
+        }
+        }
+
+        // Выход
+        async function logout() {
+        try {
+        await fetch('/logout');
+        location.reload();
+        } catch (error) {
+        location.reload();
+        }
+        }
+
+        // Управление состоянием кнопок
+        function showLoading() {
+        document.querySelectorAll('button').forEach(b => b.disabled = true);
+        }
+
+        function hideLoading() {
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+        }
+    </script>
+</body>
+</html>
